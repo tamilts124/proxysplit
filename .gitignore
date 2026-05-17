@@ -50,6 +50,15 @@ Pipfile.lock
 Thumbs.db
 desktop.ini
 
+# ── Tor data directories ──
+tor_data/
+tor_data_*/
+
+# ── Disk cache (sqlite3 WAL files) ──
+*.db
+*.db-wal
+*.db-shm
+
 # ── Logs ──
 *.log
 logs/
@@ -59,3 +68,9 @@ logs/
 .coverage
 htmlcov/
 .tox/
+
+# ── Secrets / local overrides ──
+.env
+*.env
+secrets.yaml
+*.secret.*

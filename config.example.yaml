@@ -13,15 +13,78 @@ chunk_size: 524288   # 512 KB
 # Max concurrent chunk fetches at once
 max_workers: 10
 
-# Retry attempts per chunk on failure (1 = no retry, 2 = one retry with a fresh proxy, etc.)
+# Retry attempts per chunk on failure
 chunk_retries: 2
 
-# Stream assembled chunks to the browser progressively (true = lower TTFB for large files)
+# ── Timeouts ─────────────────────────────────
+chunk_timeout: 60    # seconds per-chunk read timeout
+connect_timeout: 10  # TCP connect timeout in seconds
+head_timeout: 15     # HEAD request timeout in seconds
+
+# ── chunk_proxy mode ──────────────────────────
+# true  (default): each chunk uses a DIFFERENT proxy — maximum parallelism
+# false          : all chunks in a request share ONE proxy (request-level)
+chunk_proxy: true
+
+# Stream chunks to the browser progressively (true progressive: each chunk
+# is written to the client as it arrives — no buffering of the full file)
 streaming: true
 
+# ── Weighted Proxy Selection ──────────────────
+# When true, proxies with higher success rates are chosen more often.
+# Weights are based on the running success/failure ratio per proxy.
+# When false, proxies are chosen uniformly at random.
+weighted_selection: true
+
+# ── Proxy Quarantine (auto-ban) ───────────────
+# After ban_threshold consecutive failures a proxy is quarantined.
+# Ban duration starts at ban_base_delay seconds and doubles on each
+# re-ban (exponential backoff), up to ban_max_delay.
+# Banned proxies are retested by the background health checker
+# (if check_interval > 0) and reinstated automatically on success.
+ban_threshold: 5        # consecutive failures before quarantine
+ban_base_delay: 60      # initial ban duration in seconds
+ban_max_delay: 3600     # maximum ban duration in seconds (1 hour)
+
+# ── Background Health Recheck ─────────────────
+# Periodically retests proxies whose ban period has elapsed.
+# 0 = disabled. Example: 300 = retest expired bans every 5 minutes.
+check_interval: 0
+
+# ── Tor support ──────────────────────────────
+# Spawn one Tor process per worker, each with its own SOCKS + control port.
+# Tor processes are added to the proxy pool automatically.
+#
+# Example A — Tor only, 4 instances, auto circuit refresh every 5 minutes:
+#   tor: true
+#   tor_only: true
+#   tor_instances: 4
+#   tor_refresh_interval: 300
+#
+# Example B — Mix Tor with regular proxies, chunk-level routing:
+#   tor: true
+#   tor_only: false
+#   chunk_proxy: true
+#   proxies:
+#     - "socks5://1.2.3.4:1080"
+#
+# Example C — Tor only, request-level routing (one circuit per download):
+#   tor: true
+#   tor_only: true
+#   chunk_proxy: false
+
+tor: false
+tor_only: false
+tor_instances: 0          # 0 = auto (one per max_workers)
+base_tor_port: 9050
+base_tor_control_port: 9150
+tor_data_dir: "tor_data"
+tor_refresh_interval: 0   # seconds; 0 = disabled
+tor_password: ""
+tor_launch_timeout: 90
+tor_newnym_cooldown: 10
+
 # ── Chunk exclusions ─────────────────────────
-# Extensions/MIME types that always use single-fetch (no chunking).
-# Add any type your target server rejects Range headers for.
 no_chunk_extensions:
   - ".html"
   - ".htm"
@@ -65,15 +128,30 @@ no_chunk_mimetypes:
 # ── Free Proxy API ───────────────────────────
 free_proxy_api: "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=json"
 free_proxy_file: "free-proxy-list.txt"
+# In headless/daemon mode (Docker, systemd) the download prompt is suppressed.
+# Set to true to force re-download even without a TTY.
+free_proxy_redownload: false
 
-# Proxy pool — add as many as you like (minimum 2 required).
-# Supported formats:
-#   HTTP  : http://ip:port
-#   HTTP  : http://user:pass@ip:port
-#   SOCKS5: socks5://ip:port
-#   SOCKS5: socks5://user:pass@ip:port
-#
-# TODO: replace these placeholders with real proxy URLs before starting.
+# ── Response cache (L1 in-memory) ────────────────────────────
+cache_size: 256          # max in-memory entries (0 = disabled)
+cache_ttl: 300           # default TTL in seconds
+cache_max_body_mb: 64    # bodies larger than this are not cached in RAM
+
+# ── Disk cache (L2, large files, cross-restart) ───────────────────
+# Uncomment to enable.  Uses sqlite3 with WAL mode.
+# disk_cache_path: "/var/cache/proxy/disk_cache.db"
+# disk_cache_max_size_mb: 4096   # total DB size cap in MB
+# disk_cache_default_ttl: 86400  # default TTL in seconds (24 h)
+# disk_cache_max_body_mb: 2048   # per-entry body cap in MB
+
+# ── Prometheus push gateway ──────────────────────────────────
+# Push metrics to a Pushgateway (useful when the pull /metrics can't be scraped).
+# Uncomment to enable.
+# prometheus_push_url:      "http://pushgateway:9091"
+# prometheus_push_interval: 15    # seconds between pushes
+# prometheus_push_job:      "proxy_server"
+
+# Proxy pool (minimum 2 unless tor_only: true)
 proxies:
   # - "http://1.2.3.4:8080"
   # - "http://user:pass@5.6.7.8:3128"
