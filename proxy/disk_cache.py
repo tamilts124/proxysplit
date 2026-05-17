@@ -28,6 +28,7 @@ from asyncio coroutines via run_in_executor.
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from proxy.logging_setup import log
@@ -239,8 +240,32 @@ class DiskCache:
                 self._conn = None
 
 
-# ── Module-level singleton — set by init() ───────────────────────────────────
+# Module-level singleton — set by init() ───────────────────────────────────
 DISK_CACHE: Optional[DiskCache] = None
+
+# Dedicated executor so disk I/O never blocks the shared asyncio threadpool.
+# Two workers are enough: one for get, one for concurrent puts/evictions.
+_DISK_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="disk_cache")
+
+
+async def async_get(url: str):
+    """Non-blocking get — runs on the dedicated disk-cache executor."""
+    import asyncio
+    if DISK_CACHE is None:
+        return None
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_DISK_EXECUTOR, DISK_CACHE.get, url)
+
+
+async def async_put(url: str, status: int, body: bytes, headers: dict):
+    """Non-blocking put — fire-and-forget on the dedicated disk-cache executor."""
+    import asyncio
+    if DISK_CACHE is None:
+        return
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        _DISK_EXECUTOR, lambda: DISK_CACHE.put(url, status, body, headers)
+    )
 
 
 def init(

@@ -182,25 +182,32 @@ class ProxyStats:
     ) -> int:
         """Return a chunk size scaled to this proxy's relative score.
 
-        Faster proxies (higher score) get proportionally larger chunks so they
-        stay busy; slower proxies get smaller chunks so they finish sooner and
-        don't stall the write loop.  The result is clamped to [minimum, maximum].
-
-        Scaling uses the ratio of this proxy's score to the average score across
-        all tracked proxies.  When only one proxy exists or scores are identical,
-        every proxy gets base_size.
+        Uses the median score across all tracked proxies as the baseline
+        (rather than the mean) so a single outlier fast proxy doesn't
+        compress chunks for every other proxy in the pool.
         """
         with self._lock:
-            all_scores = [self._score(e) for e in self._data.values()]
+            all_scores = sorted(self._score(e) for e in self._data.values())
             my_score   = self._score(self._entry(url))
         if not all_scores:
             return base_size
-        avg_score = sum(all_scores) / len(all_scores)
-        if avg_score <= 0:
+        mid = len(all_scores) // 2
+        median_score = (
+            all_scores[mid]
+            if len(all_scores) % 2
+            else (all_scores[mid - 1] + all_scores[mid]) / 2
+        )
+        if median_score <= 0:
             return base_size
-        ratio  = my_score / avg_score
+        ratio  = my_score / median_score
         scaled = int(base_size * ratio)
         return max(minimum, min(maximum, scaled))
+
+    def evict(self, url: str):
+        """Remove all stats for a proxy that has been permanently removed from
+        the registry.  Prevents unbounded growth of _data when proxies rotate."""
+        with self._lock:
+            self._data.pop(url, None)
 
     def _windowed(self, e: dict, since: float) -> dict:
         evts  = [(ts, ok, lat) for ts, ok, lat in e["events"] if ts >= since]

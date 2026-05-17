@@ -4,13 +4,15 @@ _ProgressiveStream: decoupled fetch/write pipeline with sliding-window
 prefetch, per-chunk asyncio.Event readiness signals, and optional
 Happy-Eyeballs chunk-0 race.
 
-v6 architecture:
+v7 architecture:
   fetch_sem (Semaphore) — bounds simultaneous network I/O.
   ready[i] (Event)     — set when chunk i data is available; write loop
                           awaits it then advances without waiting on others.
   prefetch_gate[i]     — released by write loop after writing chunk i,
                           allowing fetch tasks beyond prefetch_ahead to start.
   retry_budget         — shared Semaphore limits total retries per request.
+  _buf_bytes           — asyncio.Lock-guarded counter caps total buffered bytes
+                          so a slow client cannot cause unbounded RAM growth.
 """
 
 import asyncio
@@ -36,6 +38,7 @@ class _ProgressiveStream:
         partial_start: int = 0,
         partial_end: int = 0,
         full_content_length: int = 0,
+        max_buffer_bytes: int = 64 * 1024 * 1024,  # 64 MB hard cap on buffered chunks
     ):
         self.url                 = url
         self.ranges              = ranges
@@ -59,6 +62,7 @@ class _ProgressiveStream:
         self.partial_start       = partial_start
         self.partial_end         = partial_end
         self.full_content_length = full_content_length
+        self.max_buffer_bytes    = max_buffer_bytes
 
     async def send(self, request: web.Request) -> web.StreamResponse:
         status_code = 206 if self.is_partial else 200
@@ -81,6 +85,16 @@ class _ProgressiveStream:
         ready:   list[asyncio.Event] = [asyncio.Event() for _ in range(self.num_chunks)]
         fetch_sem = asyncio.Semaphore(self.max_workers)
 
+        # Memory backpressure: track total bytes sitting in results[] awaiting
+        # the write loop.  Fetch tasks wait here if the buffer is full; the
+        # write loop decrements the counter after each resp.write(), unblocking
+        # the next fetch.  This prevents a slow client from accumulating
+        # unbounded in-memory chunk data.
+        _buf_bytes     = 0
+        _buf_lock      = asyncio.Lock()
+        _buf_has_space = asyncio.Event()
+        _buf_has_space.set()  # initially empty — space available
+
         prefetch_gate: list[asyncio.Event] = [asyncio.Event() for _ in range(self.num_chunks)]
         for i in range(min(self.prefetch_ahead, self.num_chunks)):
             prefetch_gate[i].set()
@@ -100,7 +114,20 @@ class _ProgressiveStream:
             await prefetch_gate[gate_idx].wait()
             async with fetch_sem:
                 try:
-                    results[i] = await _do_fetch(s, e, i, proxy)
+                    res = await _do_fetch(s, e, i, proxy)
+                    # Wait for buffer space before storing the result so a slow
+                    # client doesn't let in-memory chunk data grow unboundedly.
+                    nonlocal _buf_bytes
+                    if not isinstance(res, Exception):
+                        chunk_sz = len(res[1])
+                        while True:
+                            async with _buf_lock:
+                                if _buf_bytes + chunk_sz <= self.max_buffer_bytes:
+                                    _buf_bytes += chunk_sz
+                                    break
+                                _buf_has_space.clear()
+                            await _buf_has_space.wait()
+                    results[i] = res
                 except Exception as exc:
                     results[i] = exc
                 finally:
@@ -169,6 +196,11 @@ class _ProgressiveStream:
                 idx, data, _status, used_proxy = result
                 await resp.write(data)
                 bytes_sent += len(data)
+                # Release buffer quota so stalled fetch tasks can proceed.
+                nonlocal _buf_bytes  # noqa: F821 (defined in enclosing send())
+                async with _buf_lock:
+                    _buf_bytes = max(0, _buf_bytes - len(data))
+                    _buf_has_space.set()
                 trace_parts.append(f"{i}:{used_proxy}")
                 next_gate = i + 1
                 if next_gate < self.num_chunks:

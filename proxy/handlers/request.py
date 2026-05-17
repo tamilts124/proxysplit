@@ -15,7 +15,7 @@ from aiohttp import web
 
 from proxy.logging_setup import log
 from proxy.cache import CACHE
-from proxy.disk_cache import DISK_CACHE
+from proxy.disk_cache import DISK_CACHE, async_get as disk_async_get, async_put as disk_async_put
 from proxy.stats import STATS
 from proxy.fetchers.chunk import CHUNK_SIZER
 from proxy.streaming import _ProgressiveStream
@@ -150,8 +150,7 @@ def make_request_handler(config: dict):
                                     headers={"X-Cache": "HIT-L1", "X-Request-ID": rid})
             # L2 disk cache
             if DISK_CACHE is not None:
-                disk_hit = await asyncio.get_event_loop().run_in_executor(
-                    None, DISK_CACHE.get, url)
+                disk_hit = await disk_async_get(url)
                 if disk_hit is not None:
                     status, body, hdrs = disk_hit
                     ct = hdrs.get("Content-Type", "application/octet-stream").split(";")[0].strip()
@@ -203,10 +202,9 @@ def make_request_handler(config: dict):
             if request.method == "GET" and isinstance(result, web.Response):
                 CACHE.put(url, result.status, result.body or b"", dict(result.headers))
                 if DISK_CACHE is not None:
-                    body_bytes = result.body or b""
-                    hdrs       = dict(result.headers)
-                    asyncio.get_event_loop().run_in_executor(
-                        None, lambda: DISK_CACHE.put(url, result.status, body_bytes, hdrs))
+                    asyncio.ensure_future(
+                        disk_async_put(url, result.status, result.body or b"", dict(result.headers))
+                    )
             if isinstance(result, web.Response):
                 result.headers["X-Request-ID"] = rid
             return result

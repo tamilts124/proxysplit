@@ -63,6 +63,7 @@ class ProxyRegistry:
             self._tor_urls.discard(url)
         PROXY_TAGS.pop(url, None)
         remove_limiter(url)
+        STATS.evict(url)
         log.info(f"   - Removed proxy: {url}")
         return True
 

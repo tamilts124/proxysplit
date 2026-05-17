@@ -224,7 +224,18 @@ async def handle_inner(
         exclude_window=exclude_window,
     )
     if not assigned:
-        return web.Response(status=503, text="No proxies available")
+        from proxy.registry import REGISTRY
+        pool_size = len(REGISTRY.all()) if REGISTRY else 0
+        return web.Response(
+            status=503,
+            content_type="application/json",
+            headers={"Retry-After": "5"},
+            text=(
+                f'{{"error": "no proxies available", '
+                f'"pool": {pool!r}, '
+                f'"pool_size": {pool_size}}}'
+            ),
+        )
 
     if per_proxy_chunks:
         ranges, assigned = apply_per_proxy_chunk_sizes(
@@ -282,6 +293,7 @@ async def handle_inner(
             partial_start=effective_start,
             partial_end=effective_end,
             full_content_length=content_length,
+            max_buffer_bytes=config.get("stream_buffer_mb", 64) * 1024 * 1024,
         )
 
     # ── Non-streaming: gather all chunks, then assemble ───────────────────────
