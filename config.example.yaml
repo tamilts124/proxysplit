@@ -1,0 +1,81 @@
+# ──────────────────────────────────────────────
+#  Chunk Proxy Configuration — EXAMPLE FILE
+#  Copy this to config.yaml and fill in real proxies.
+# ──────────────────────────────────────────────
+
+# Listening address
+host: "0.0.0.0"
+port: 8888
+
+# Size of each byte-range chunk in bytes
+chunk_size: 524288   # 512 KB
+
+# Max concurrent chunk fetches at once
+max_workers: 10
+
+# Retry attempts per chunk on failure (1 = no retry, 2 = one retry with a fresh proxy, etc.)
+chunk_retries: 2
+
+# Stream assembled chunks to the browser progressively (true = lower TTFB for large files)
+streaming: true
+
+# ── Chunk exclusions ─────────────────────────
+# Extensions/MIME types that always use single-fetch (no chunking).
+# Add any type your target server rejects Range headers for.
+no_chunk_extensions:
+  - ".html"
+  - ".htm"
+  - ".xhtml"
+  - ".json"
+  - ".xml"
+  - ".rss"
+  - ".atom"
+  - ".txt"
+  - ".csv"
+  - ".tsv"
+  - ".yaml"
+  - ".yml"
+  - ".toml"
+  - ".ini"
+  - ".cfg"
+  - ".md"
+  - ".rst"
+  - ".js"
+  - ".mjs"
+  - ".cjs"
+  - ".ts"
+  - ".css"
+  - ".scss"
+  - ".less"
+  - ".svg"
+  - ".wasm"
+
+no_chunk_mimetypes:
+  - "text/"
+  - "application/json"
+  - "application/xml"
+  - "application/javascript"
+  - "application/x-javascript"
+  - "application/ld+json"
+  - "application/atom+xml"
+  - "application/rss+xml"
+  - "image/svg+xml"
+  - "application/wasm"
+
+# ── Free Proxy API ───────────────────────────
+free_proxy_api: "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=json"
+free_proxy_file: "free-proxy-list.txt"
+
+# Proxy pool — add as many as you like (minimum 2 required).
+# Supported formats:
+#   HTTP  : http://ip:port
+#   HTTP  : http://user:pass@ip:port
+#   SOCKS5: socks5://ip:port
+#   SOCKS5: socks5://user:pass@ip:port
+#
+# TODO: replace these placeholders with real proxy URLs before starting.
+proxies:
+  # - "http://1.2.3.4:8080"
+  # - "http://user:pass@5.6.7.8:3128"
+  # - "socks5://9.10.11.12:1080"
+  # - "socks5://user:pass@13.14.15.16:1080"

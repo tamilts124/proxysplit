@@ -1,0 +1,6 @@
+aiohttp>=3.9.0
+aiohttp-socks>=0.8.4
+pyyaml>=6.0
+requests[socks]>=2.31.0   # only needed if you use the --use-free-list sync fallback path
+PySocks>=1.7.1
+python-socks[asyncio]>=2.4.3  # required for CONNECT tunnel through SOCKS5 proxies
